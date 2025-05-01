@@ -26,11 +26,22 @@ class ProgressBar(QWidget):
         self.setMinimumHeight(30)
 
     def set_total_steps(self, steps):
+        """Set the total number of steps in the progress bar.
+        
+        Args:
+            steps (int): Number of steps to display
+        """
         self._total_steps = max(1, steps)
         self._completed_steps = set(s for s in self._completed_steps if s < self._total_steps)
         self.update()  # Trigger repaint
 
     def set_step_completed(self, step_index, completed):
+        """Mark a specific step as completed or not completed.
+        
+        Args:
+            step_index (int): The index of the step to update
+            completed (bool): True to mark as completed, False to mark as not completed
+        """
         if 0 <= step_index < self._total_steps:
             if completed:
                 self._completed_steps.add(step_index)
@@ -38,19 +49,29 @@ class ProgressBar(QWidget):
                 self._completed_steps.discard(step_index)
             self.update()  # Trigger repaint
 
-    # Keep the original set_current_step for compatibility
     def set_current_step(self, step):
+        """Mark all steps up to the given index as completed.
+        This is kept for API compatibility and potential future use.
+        
+        Args:
+            step (int): All steps before this index will be marked as completed
+        """
         self._completed_steps = set(range(step))
         self.update()  # Trigger repaint
 
     def paintEvent(self, event):
+        """Paint the progress bar with circles and connecting lines."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
         width = self.width()
         height = self.height()
         padding = 10
-        diameter = min(height - 2 * padding, (width - 2 * padding) / (self._total_steps + (self._total_steps - 1) * 0.5))
+        
+        # Calculate diameter with safety check to ensure it's always positive
+        raw_diameter = min(height - 2 * padding, (width - 2 * padding) / (self._total_steps + (self._total_steps - 1) * 0.5))
+        diameter = max(1, raw_diameter)
+        
         if self._total_steps == 1:
             step_width = 0
         else:
@@ -103,7 +124,10 @@ class ProgressBar(QWidget):
 
 
 class TaskProgressApp(QWidget):
+    """Main application widget for tracking task progress with subtasks."""
+    
     def __init__(self):
+        """Initialize the TaskProgressApp widget."""
         super().__init__()
         self.subtasks = [] # List to hold tuples of (QCheckBox, QLabel)
         self._current_editor = None # To hold the active QLineEdit
@@ -111,6 +135,7 @@ class TaskProgressApp(QWidget):
         self.initUI()
 
     def initUI(self):
+        """Initialize the user interface components."""
         self.setWindowTitle('Task Progress')
         # self.setStyleSheet("background-color: #f0f0f0;") # Optional: Set background
 
@@ -135,7 +160,7 @@ class TaskProgressApp(QWidget):
         progress_layout = QVBoxLayout(progress_container)
         progress_layout.setContentsMargins(10, 10, 10, 10) # Inner padding
 
-        self.progress_bar = ProgressBar(total_steps=1) # Start with 4 steps
+        self.progress_bar = ProgressBar(total_steps=1)
         progress_layout.addWidget(self.progress_bar)
         main_layout.addWidget(progress_container)
 
@@ -173,8 +198,8 @@ class TaskProgressApp(QWidget):
         self.resize(400, 300) # Set initial size
         self.show()
 
-
     def on_add_subtask_clicked(self):
+        """Handle the 'Add Subtask' button click event."""
         # Create a new subtask with a default name
         subtask_num = len(self.subtasks) + 1
         self.add_subtask(f"Subtask {subtask_num}", checked=False)
@@ -183,8 +208,13 @@ class TaskProgressApp(QWidget):
         self.progress_bar.set_total_steps(len(self.subtasks))
         self.update_progress()
 
-
     def add_subtask(self, text="New Subtask", checked=False):
+        """Add a new subtask to the list.
+        
+        Args:
+            text (str): The label text for the subtask
+            checked (bool): Whether the subtask is initially checked
+        """
         subtask_container = QWidget()
         subtask_layout = QHBoxLayout(subtask_container)  # Set container as parent for layout
         subtask_layout.setContentsMargins(0, 0, 0, 0)
@@ -231,6 +261,13 @@ class TaskProgressApp(QWidget):
         self.update_progress()
 
     def handle_subtask_mouse_event(self, event, label, container):
+        """Handle mouse events on subtask labels.
+        
+        Args:
+            event (QMouseEvent): The mouse event
+            label (QLabel): The label that was clicked
+            container (QWidget): The container widget for the subtask
+        """
         # Left button: edit the subtask
         if event.button() == Qt.LeftButton:
             self.start_editing_subtask(event, label)
@@ -239,6 +276,12 @@ class TaskProgressApp(QWidget):
             self.delete_subtask(label, container)
 
     def delete_subtask(self, label, container):
+        """Delete a subtask from the list.
+        
+        Args:
+            label (QLabel): The label of the subtask to delete
+            container (QWidget): The container widget for the subtask
+        """
         # Find the subtask in our list
         for i, (checkbox, lbl) in enumerate(self.subtasks):
             if lbl == label:
@@ -254,16 +297,8 @@ class TaskProgressApp(QWidget):
                 self.update_progress()
                 break
 
-    def edit_main_task_label(self, event):
-        # Finish any inline subtask editing first
-        if self._current_editor:
-            self.finish_editing_subtask()
-        text, ok = QInputDialog.getText(self, 'Edit Main Task', 'Enter new task name:', QLineEdit.Normal, self.main_task_label.text())
-        if ok and text:
-            self.main_task_label.setText(text)
-
-
     def update_progress(self):
+        """Update the progress bar based on completed subtasks."""
         # Finish any inline editing before updating progress/styles
         if self._current_editor:
             # if editing main task, finish that, else finish subtask
@@ -285,8 +320,12 @@ class TaskProgressApp(QWidget):
             else:
                 label.setStyleSheet(f"color: {COLOR_DARK_GRAY.name()}; text-decoration: none;")
 
-
     def start_editing_main_task(self, event):
+        """Start inline editing of the main task label.
+        
+        Args:
+            event (QMouseEvent): The mouse event that triggered editing
+        """
         # Finish any other inline editing first
         if self._current_editor:
             # Decide if the current edit should be finished or cancelled
@@ -322,6 +361,7 @@ class TaskProgressApp(QWidget):
         self._current_editor.editingFinished.connect(self.finish_editing_main_task)
 
     def finish_editing_main_task(self):
+        """Finish inline editing of the main task label."""
         if not self._current_editor or self._edited_label != self.main_task_label:
             return # Not editing the main task or editor already gone
 
@@ -350,9 +390,13 @@ class TaskProgressApp(QWidget):
         self._current_editor = None
         self._edited_label = None
 
-
-
     def start_editing_subtask(self, event, label):
+        """Start inline editing of a subtask label.
+        
+        Args:
+            event (QMouseEvent): The mouse event that triggered editing
+            label (QLabel): The label to edit
+        """
         # If already editing another label, finish that first (existing code)
         if self._current_editor:
             if self._edited_label == self.main_task_label:
@@ -403,13 +447,21 @@ class TaskProgressApp(QWidget):
         self._current_editor.selectAll()
 
     def finish_editing_subtask(self):
+        """Finish inline editing of a subtask label."""
         if not self._current_editor or not self._edited_label:
             return
 
         editor = self._current_editor
         label = self._edited_label
-        layout = editor.parentWidget().layout()
-        if not layout: return
+        
+        # Add safety checks for parent widget and layout
+        parent_widget = editor.parentWidget()
+        if not parent_widget:
+            return
+            
+        layout = parent_widget.layout()
+        if not layout:
+            return
 
         # Get text and update label if not empty
         new_text = editor.toPlainText().strip()
@@ -437,6 +489,15 @@ class TaskProgressApp(QWidget):
         self.update_progress() # Re-apply styling if needed (like strikethrough)
 
     def eventFilter(self, obj, event):
+        """Event filter to handle special key presses in the editor.
+        
+        Args:
+            obj (QObject): The object that the event was sent to
+            event (QEvent): The event that was sent
+            
+        Returns:
+            bool: True if the event was handled, False otherwise
+        """
         # Handle key press events in the text editor
         if obj is self._current_editor and event.type() == QEvent.KeyPress:
             # Check if Ctrl+Enter was pressed
