@@ -1,7 +1,7 @@
 [project]
 name = "ai-conversation-progress"
 version = "0.1.0"
-description = "Add your description here"
+description = "A simple, elegant application for tracking progress on tasks and subtasks with visual feedback."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
