@@ -49,14 +49,13 @@ class ProgressBar(QWidget):
                 self._completed_steps.discard(step_index)
             self.update()  # Trigger repaint
 
-    def set_current_step(self, step):
+    def complete_steps_until(self, step_index):
         """Mark all steps up to the given index as completed.
-        This is kept for API compatibility and potential future use.
         
         Args:
-            step (int): All steps before this index will be marked as completed
+            step_index (int): All steps before this index will be marked as completed
         """
-        self._completed_steps = set(range(step))
+        self._completed_steps = set(range(min(step_index, self._total_steps)))
         self.update()  # Trigger repaint
 
     def paintEvent(self, event):
@@ -209,12 +208,7 @@ class TaskProgressApp(QWidget):
         self.update_progress()
 
     def add_subtask(self, text="New Subtask", checked=False):
-        """Add a new subtask to the list.
-        
-        Args:
-            text (str): The label text for the subtask
-            checked (bool): Whether the subtask is initially checked
-        """
+        """Add a new subtask to the list."""
         subtask_container = QWidget()
         subtask_layout = QHBoxLayout(subtask_container)  # Set container as parent for layout
         subtask_layout.setContentsMargins(0, 0, 0, 0)
@@ -253,6 +247,24 @@ class TaskProgressApp(QWidget):
 
         subtask_layout.addWidget(checkbox)
         subtask_layout.addWidget(label)
+
+        # Add drag handle button
+        drag_handle = QPushButton("≡")  # Unicode triple bar symbol
+        drag_handle.setFixedWidth(20)
+        drag_handle.setStyleSheet(f"""
+            QPushButton {{
+                border: none;
+                color: {COLOR_GRAY.name()};
+                font-size: 16px;
+            }}
+            QPushButton:hover {{
+                color: {COLOR_DARK_GRAY.name()};
+            }}
+        """)
+        drag_handle.setCursor(Qt.OpenHandCursor)
+        drag_handle.mousePressEvent = lambda event, cont=subtask_container: self.start_drag(event, cont)
+    
+        subtask_layout.insertWidget(0, drag_handle)  # Add at the beginning of layout
 
         self.subtasks_layout.addWidget(subtask_container)
         self.subtasks.append((checkbox, label))
@@ -516,6 +528,34 @@ class TaskProgressApp(QWidget):
                 
         # Let the event be handled by the default handler
         return super().eventFilter(obj, event)
+
+    def start_drag(self, event, container):
+        """Start dragging a subtask."""
+        if event.button() == Qt.LeftButton:
+            # Find index of this container in layout
+            for i in range(self.subtasks_layout.count()):
+                if self.subtasks_layout.itemAt(i).widget() == container:
+                    self._drag_start_index = i
+                    container.setCursor(Qt.ClosedHandCursor)
+                    container.grabMouse()
+                    break
+                
+    def mouseMoveEvent(self, event):
+        """Handle mouse movement during drag."""
+        if hasattr(self, '_drag_start_index'):
+            # Get container being dragged
+            container = self.subtasks_layout.itemAt(self._drag_start_index).widget()
+            # Determine target position from mouse y position
+            # Implementation details here...
+
+    def mouseReleaseEvent(self, event):
+        """Finish drag operation."""
+        if hasattr(self, '_drag_start_index') and event.button() == Qt.LeftButton:
+            container = self.subtasks_layout.itemAt(self._drag_start_index).widget()
+            container.releaseMouse()
+            container.setCursor(Qt.OpenHandCursor)
+            # Reorder your subtasks array and update progress
+            del self._drag_start_index
 
 
 if __name__ == '__main__':
