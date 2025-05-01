@@ -2,14 +2,19 @@
 # -*- coding: utf-8 -*-
 
 import sys
+import json
+import os
 from PyQt5.QtCore import Qt, QRectF, pyqtSignal, QPointF, QEvent, QMimeData
-from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QFont, QDrag
+from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QFont, QDrag, QIcon
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QCheckBox, QInputDialog, QMessageBox, QDialog, QLineEdit, QPushButton,
     QTextEdit
 )
 from PyQt5.QtWidgets import QSizePolicy
+
+# Define path for storing app data
+DATA_FILE = os.path.expanduser("~/.task_progress_app.json")
 
 # Define colors
 COLOR_GREEN = QColor("#8ec07c")
@@ -122,89 +127,6 @@ class ProgressBar(QWidget):
                 painter.drawEllipse(rect)
 
 
-class DraggableWidget(QWidget):
-    """A widget that can be dragged within a layout."""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self._drag_start_position = None
-        
-    def mousePressEvent(self, event):
-        """Record the position where the mouse was pressed."""
-        if event.button() == Qt.LeftButton:
-            self._drag_start_position = event.pos()
-        super().mousePressEvent(event)
-        
-    def mouseMoveEvent(self, event):
-        """Start drag if mouse has moved far enough."""
-        if not (event.buttons() & Qt.LeftButton):
-            return
-            
-        if not self._drag_start_position:
-            return
-            
-        # Check if the mouse has moved far enough to start a drag
-        if (event.pos() - self._drag_start_position).manhattanLength() < QApplication.startDragDistance():
-            return
-            
-        # Start the drag operation
-        drag = QDrag(self)
-        mime_data = QMimeData()
-        
-        # Store the widget's index in the layout
-        parent = self.parent()
-        if parent:
-            layout = parent.layout()
-            for i in range(layout.count()):
-                if layout.itemAt(i).widget() == self:
-                    mime_data.setText(str(i))
-                    break
-                    
-        drag.setMimeData(mime_data)
-        
-        # Create drag pixmap (optional - can use a semi-transparent version of the widget)
-        # pixmap = QPixmap(self.size())
-        # self.render(pixmap)
-        # drag.setPixmap(pixmap)
-        
-        # Execute the drag
-        result = drag.exec_(Qt.MoveAction)
-        
-    def dragEnterEvent(self, event):
-        """Accept drag events that contain text data (widget index)."""
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
-            
-    def dropEvent(self, event):
-        """Handle drop event by moving the task in the layout."""
-        if not event.mimeData().hasText():
-            return
-            
-        source_index = int(event.mimeData().text())
-        
-        # Find the destination index (this widget)
-        parent = self.parent()
-        if not parent:
-            return
-            
-        # Find this widget's index in the parent layout
-        layout = parent.parentWidget().layout()
-        if not layout or not isinstance(layout, QVBoxLayout):
-            return
-            
-        # Find this widget in the parent's layout
-        for i in range(layout.count()):
-            if layout.itemAt(i).widget() == parent:
-                destination_index = i
-                # Notify parent app to handle the move
-                app = self.window()
-                if isinstance(app, TaskProgressApp) and source_index != destination_index:
-                    app.move_subtask(source_index, destination_index)
-                    event.acceptProposedAction()
-                break
-
-
 class TaskProgressApp(QWidget):
     """Main application widget for tracking task progress with subtasks."""
     
@@ -214,13 +136,25 @@ class TaskProgressApp(QWidget):
         self.subtasks = [] # List to hold tuples of (QCheckBox, QLabel)
         self._current_editor = None # To hold the active QLineEdit
         self._edited_label = None   # To hold the QLabel being edited
+        
+        # Set application icon
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            
         self.initUI()
+        
+        # Load saved state (if any)
+        if not self.load_state():
+            # If loading state failed, make sure we have at least one subtask
+            if not self.subtasks:
+                self.add_subtask("Subtask 1", False)
+                self.update_progress()
 
     def initUI(self):
         """Initialize the user interface components."""
         self.setWindowTitle('Task Progress')
-        # self.setStyleSheet("background-color: #f0f0f0;") # Optional: Set background
-
+        
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(15)
@@ -246,13 +180,10 @@ class TaskProgressApp(QWidget):
         progress_layout.addWidget(self.progress_bar)
         main_layout.addWidget(progress_container)
 
-
         # --- Subtasks ---
         self.subtasks_layout = QVBoxLayout()
         self.subtasks_layout.setSpacing(10)
-
-        # Add initial subtasks
-        self.add_subtask("Subtask 1", checked=False)
+        
         # Add the "Add Subtask" button
         self.add_button = QPushButton("+ Add Subtask")
         self.add_button.setStyleSheet(f"""
@@ -276,7 +207,6 @@ class TaskProgressApp(QWidget):
         main_layout.addWidget(self.add_button)
         main_layout.addStretch(1) # Push everything up
 
-        self.update_progress() # Initial progress update
         self.resize(400, 300) # Set initial size
         self.show()
 
@@ -292,7 +222,7 @@ class TaskProgressApp(QWidget):
 
     def add_subtask(self, text="New Subtask", checked=False):
         """Add a new subtask to the list."""
-        subtask_container = QWidget()  # Regular widget instead of draggable widget
+        subtask_container = QWidget()
         subtask_layout = QHBoxLayout(subtask_container)
         subtask_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -323,43 +253,7 @@ class TaskProgressApp(QWidget):
         label.setToolTip("Left-click to edit, middle-click to delete")
         label.mousePressEvent = lambda event, lbl=label, container=subtask_container: self.handle_subtask_mouse_event(event, lbl, container)
 
-        # Add UP arrow button
-        up_button = QPushButton("▲")
-        up_button.setFixedWidth(20)
-        up_button.setStyleSheet(f"""
-            QPushButton {{
-                border: none;
-                color: {COLOR_GRAY.name()};
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                color: {COLOR_DARK_GRAY.name()};
-            }}
-        """)
-        up_button.setCursor(Qt.PointingHandCursor)
-        
-        # Add DOWN arrow button
-        down_button = QPushButton("▼")
-        down_button.setFixedWidth(20)
-        down_button.setStyleSheet(f"""
-            QPushButton {{
-                border: none;
-                color: {COLOR_GRAY.name()};
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                color: {COLOR_DARK_GRAY.name()};
-            }}
-        """)
-        down_button.setCursor(Qt.PointingHandCursor)
-        
-        # Connect buttons to move methods
-        up_button.clicked.connect(lambda: self.move_subtask_up(subtask_container))
-        down_button.clicked.connect(lambda: self.move_subtask_down(subtask_container))
-
-        # Add all widgets to layout
-        subtask_layout.addWidget(up_button)
-        subtask_layout.addWidget(down_button)
+        # Add widgets to layout - no arrows
         subtask_layout.addWidget(checkbox)
         subtask_layout.addWidget(label)
 
@@ -430,11 +324,7 @@ class TaskProgressApp(QWidget):
                 label.setStyleSheet(f"color: {COLOR_DARK_GRAY.name()}; text-decoration: none;")
 
     def start_editing_main_task(self, event):
-        """Start inline editing of the main task label.
-        
-        Args:
-            event (QMouseEvent): The mouse event that triggered editing
-        """
+        """Start inline editing of the main task label."""
         # Finish any other inline editing first
         if self._current_editor:
             # Decide if the current edit should be finished or cancelled
@@ -458,9 +348,10 @@ class TaskProgressApp(QWidget):
         font = self.main_task_label.font()
         self._current_editor.setFont(font)
         self._current_editor.setStyleSheet(f"color: {COLOR_DARK_GRAY.name()}; border: 1px solid {COLOR_GRAY.name()}; padding: 1px;")
-        # Main task editor doesn't need to expand like subtasks
-        # self._current_editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
+        
+        # Install event filter to handle the Escape key
+        self._current_editor.installEventFilter(self)
+        
         layout.removeWidget(self.main_task_label)
         self.main_task_label.hide()
         layout.insertWidget(index, self._current_editor)
@@ -598,92 +489,95 @@ class TaskProgressApp(QWidget):
         self.update_progress() # Re-apply styling if needed (like strikethrough)
 
     def eventFilter(self, obj, event):
-        """Event filter to handle special key presses in the editor.
-        
-        Args:
-            obj (QObject): The object that the event was sent to
-            event (QEvent): The event that was sent
-            
-        Returns:
-            bool: True if the event was handled, False otherwise
-        """
+        """Event filter to handle special key presses in the editor."""
         # Handle key press events in the text editor
         if obj is self._current_editor and event.type() == QEvent.KeyPress:
-            # Check if Ctrl+Enter was pressed
-            if (event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter) and \
-               (event.modifiers() & Qt.ControlModifier):
-                # Insert a newline
-                cursor = self._current_editor.textCursor()
-                cursor.insertText('\n')
-                self._current_editor.setTextCursor(cursor)
-                return True
-            # Handle Enter key to finish editing
-            elif (event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter) and \
-                 not (event.modifiers() & Qt.ControlModifier):
-                self.finish_editing_subtask()
-                return True
+            # For the main task editor (QLineEdit)
+            if self._edited_label == self.main_task_label:
+                if event.key() == Qt.Key_Escape:
+                    self.finish_editing_main_task()
+                    return True
+            # For subtask editors (QTextEdit)
+            else:
+                # Check if Ctrl+Enter was pressed
+                if (event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter) and \
+                   (event.modifiers() & Qt.ControlModifier):
+                    # Insert a newline
+                    cursor = self._current_editor.textCursor()
+                    cursor.insertText('\n')
+                    self._current_editor.setTextCursor(cursor)
+                    return True
+                # Handle Enter key to finish editing
+                elif (event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter) and \
+                     not (event.modifiers() & Qt.ControlModifier):
+                    self.finish_editing_subtask()
+                    return True
+                # Handle Escape key to finish editing with current text
+                elif event.key() == Qt.Key_Escape:
+                    self.finish_editing_subtask()
+                    return True
                 
         # Let the event be handled by the default handler
         return super().eventFilter(obj, event)
 
-    def move_subtask(self, source_index, target_index):
-        """Move a subtask from one position to another."""
-        # Validate indices
-        if not (0 <= source_index < self.subtasks_layout.count() and 
-                0 <= target_index < self.subtasks_layout.count()):
-            return
-            
-        # Adjust target index if we're moving downward
-        if source_index < target_index:
-            target_index -= 1
-            
-        # Get the widget and data
-        source_widget = self.subtasks_layout.itemAt(source_index).widget()
-        subtask_item = self.subtasks.pop(source_index)
+    def save_state(self):
+        """Save the current app state to a JSON file."""
+        data = {
+            "main_task": self.main_task_label.text(),
+            "subtasks": [
+                {
+                    "text": label.text(),
+                    "checked": checkbox.isChecked()
+                }
+                for checkbox, label in self.subtasks
+            ]
+        }
         
-        # Remove from the layout
-        self.subtasks_layout.removeWidget(source_widget)
-        
-        # Important: Explicitly unparent the widget
-        source_widget.setParent(None)
-        
-        # Insert at the new position
-        self.subtasks_layout.insertWidget(target_index, source_widget)
-        self.subtasks.insert(target_index, subtask_item)
-        
-        # Force layout update
-        self.subtasks_layout.update()
-        
-        # Update progress
-        self.update_progress()
+        try:
+            with open(DATA_FILE, 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            print(f"Error saving app state: {e}")
 
-    def move_subtask_up(self, container):
-        """Move a subtask up in the list."""
-        # Find the index of this container
-        index = -1
-        for i in range(self.subtasks_layout.count()):
-            if self.subtasks_layout.itemAt(i).widget() == container:
-                index = i
-                break
-        
-        if index > 0:  # Can't move the first item up
-            self.move_subtask(index, index - 1)
-            # Force a UI update
-            QApplication.processEvents()
-        
-    def move_subtask_down(self, container):
-        """Move a subtask down in the list."""
-        # Find the index of this container
-        index = -1
-        for i in range(self.subtasks_layout.count()):
-            if self.subtasks_layout.itemAt(i).widget() == container:
-                index = i
-                break
-        
-        if index < self.subtasks_layout.count() - 1:  # Can't move the last item down
-            self.move_subtask(index, index + 1)
-            # Force a UI update
-            QApplication.processEvents()
+    def load_state(self):
+        """Load app state from a JSON file."""
+        if not os.path.exists(DATA_FILE):
+            return False
+            
+        try:
+            with open(DATA_FILE, 'r') as f:
+                data = json.load(f)
+                
+            # Set main task
+            self.main_task_label.setText(data.get("main_task", "Main Task"))
+            
+            # Clear existing subtasks
+            while self.subtasks_layout.count() > 0:
+                item = self.subtasks_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self.subtasks = []
+            
+            # Add subtasks from saved data
+            subtasks = data.get("subtasks", [])
+            if subtasks:
+                for subtask in subtasks:
+                    self.add_subtask(subtask.get("text", "Subtask"), subtask.get("checked", False))
+            else:
+                # Add at least one subtask if none were saved
+                self.add_subtask("Subtask 1", False)
+            
+            # Update progress bar
+            self.update_progress()    
+            return True
+        except Exception as e:
+            print(f"Error loading app state: {e}")
+            return False
+
+    def closeEvent(self, event):
+        """Handle the window close event."""
+        self.save_state()
+        super().closeEvent(event)
 
 
 if __name__ == '__main__':
