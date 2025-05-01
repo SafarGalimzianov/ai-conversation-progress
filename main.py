@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import sys
-from PyQt5.QtCore import Qt, QRectF, pyqtSignal, QPointF, QEvent
-from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QFont
+from PyQt5.QtCore import Qt, QRectF, pyqtSignal, QPointF, QEvent, QMimeData
+from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QFont, QDrag
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QCheckBox, QInputDialog, QMessageBox, QDialog, QLineEdit, QPushButton,
@@ -122,6 +122,89 @@ class ProgressBar(QWidget):
                 painter.drawEllipse(rect)
 
 
+class DraggableWidget(QWidget):
+    """A widget that can be dragged within a layout."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._drag_start_position = None
+        
+    def mousePressEvent(self, event):
+        """Record the position where the mouse was pressed."""
+        if event.button() == Qt.LeftButton:
+            self._drag_start_position = event.pos()
+        super().mousePressEvent(event)
+        
+    def mouseMoveEvent(self, event):
+        """Start drag if mouse has moved far enough."""
+        if not (event.buttons() & Qt.LeftButton):
+            return
+            
+        if not self._drag_start_position:
+            return
+            
+        # Check if the mouse has moved far enough to start a drag
+        if (event.pos() - self._drag_start_position).manhattanLength() < QApplication.startDragDistance():
+            return
+            
+        # Start the drag operation
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        
+        # Store the widget's index in the layout
+        parent = self.parent()
+        if parent:
+            layout = parent.layout()
+            for i in range(layout.count()):
+                if layout.itemAt(i).widget() == self:
+                    mime_data.setText(str(i))
+                    break
+                    
+        drag.setMimeData(mime_data)
+        
+        # Create drag pixmap (optional - can use a semi-transparent version of the widget)
+        # pixmap = QPixmap(self.size())
+        # self.render(pixmap)
+        # drag.setPixmap(pixmap)
+        
+        # Execute the drag
+        result = drag.exec_(Qt.MoveAction)
+        
+    def dragEnterEvent(self, event):
+        """Accept drag events that contain text data (widget index)."""
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+            
+    def dropEvent(self, event):
+        """Handle drop event by moving the task in the layout."""
+        if not event.mimeData().hasText():
+            return
+            
+        source_index = int(event.mimeData().text())
+        
+        # Find the destination index (this widget)
+        parent = self.parent()
+        if not parent:
+            return
+            
+        # Find this widget's index in the parent layout
+        layout = parent.parentWidget().layout()
+        if not layout or not isinstance(layout, QVBoxLayout):
+            return
+            
+        # Find this widget in the parent's layout
+        for i in range(layout.count()):
+            if layout.itemAt(i).widget() == parent:
+                destination_index = i
+                # Notify parent app to handle the move
+                app = self.window()
+                if isinstance(app, TaskProgressApp) and source_index != destination_index:
+                    app.move_subtask(source_index, destination_index)
+                    event.acceptProposedAction()
+                break
+
+
 class TaskProgressApp(QWidget):
     """Main application widget for tracking task progress with subtasks."""
     
@@ -209,8 +292,8 @@ class TaskProgressApp(QWidget):
 
     def add_subtask(self, text="New Subtask", checked=False):
         """Add a new subtask to the list."""
-        subtask_container = QWidget()
-        subtask_layout = QHBoxLayout(subtask_container)  # Set container as parent for layout
+        subtask_container = DraggableWidget()  # Use the draggable widget class
+        subtask_layout = QHBoxLayout(subtask_container)
         subtask_layout.setContentsMargins(0, 0, 0, 0)
 
         checkbox = QCheckBox()
@@ -262,7 +345,6 @@ class TaskProgressApp(QWidget):
             }}
         """)
         drag_handle.setCursor(Qt.OpenHandCursor)
-        drag_handle.mousePressEvent = lambda event, cont=subtask_container: self.start_drag(event, cont)
     
         subtask_layout.insertWidget(0, drag_handle)  # Add at the beginning of layout
 
@@ -529,33 +611,36 @@ class TaskProgressApp(QWidget):
         # Let the event be handled by the default handler
         return super().eventFilter(obj, event)
 
-    def start_drag(self, event, container):
-        """Start dragging a subtask."""
-        if event.button() == Qt.LeftButton:
-            # Find index of this container in layout
-            for i in range(self.subtasks_layout.count()):
-                if self.subtasks_layout.itemAt(i).widget() == container:
-                    self._drag_start_index = i
-                    container.setCursor(Qt.ClosedHandCursor)
-                    container.grabMouse()
-                    break
-                
-    def mouseMoveEvent(self, event):
-        """Handle mouse movement during drag."""
-        if hasattr(self, '_drag_start_index'):
-            # Get container being dragged
-            container = self.subtasks_layout.itemAt(self._drag_start_index).widget()
-            # Determine target position from mouse y position
-            # Implementation details here...
-
-    def mouseReleaseEvent(self, event):
-        """Finish drag operation."""
-        if hasattr(self, '_drag_start_index') and event.button() == Qt.LeftButton:
-            container = self.subtasks_layout.itemAt(self._drag_start_index).widget()
-            container.releaseMouse()
-            container.setCursor(Qt.OpenHandCursor)
-            # Reorder your subtasks array and update progress
-            del self._drag_start_index
+    def move_subtask(self, source_index, target_index):
+        """Move a subtask from one position to another."""
+        # Validate indices
+        if not (0 <= source_index < self.subtasks_layout.count() and 
+                0 <= target_index < self.subtasks_layout.count()):
+            return
+            
+        # Adjust target index if we're moving downward
+        if source_index < target_index:
+            target_index -= 1
+            
+        # Get the widget and data
+        source_widget = self.subtasks_layout.itemAt(source_index).widget()
+        subtask_item = self.subtasks.pop(source_index)
+        
+        # Remove from the layout
+        self.subtasks_layout.removeWidget(source_widget)
+        
+        # Important: Explicitly unparent the widget
+        source_widget.setParent(None)
+        
+        # Insert at the new position
+        self.subtasks_layout.insertWidget(target_index, source_widget)
+        self.subtasks.insert(target_index, subtask_item)
+        
+        # Force layout update
+        self.subtasks_layout.update()
+        
+        # Update progress
+        self.update_progress()
 
 
 if __name__ == '__main__':
