@@ -201,17 +201,8 @@ class TaskProgressApp(QWidget):
             QCheckBox::indicator:checked {{
                 background-color: {COLOR_GREEN.name()};
                 border: 1px solid {COLOR_GREEN.name()};
-                image: url(none); /* Hide default checkmark */
             }}
-             /* Custom checkmark (optional, simple green fill is often enough) */
-            QCheckBox::indicator:checked:after {{
-                 content: '✓'; /* Unicode checkmark */
-                 display: block;
-                 color: white;
-                 font-size: 12px; /* Adjust size */
-                 text-align: center;
-                 line-height: 18px; /* Center vertically */
-            }}
+            /* Removed unsupported :after selector (content/display) to silence warnings */
         """)
         checkbox.setChecked(checked)
         checkbox.stateChanged.connect(self.update_progress)
