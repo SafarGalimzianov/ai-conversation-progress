@@ -292,7 +292,7 @@ class TaskProgressApp(QWidget):
 
     def add_subtask(self, text="New Subtask", checked=False):
         """Add a new subtask to the list."""
-        subtask_container = DraggableWidget()  # Use the draggable widget class
+        subtask_container = QWidget()  # Regular widget instead of draggable widget
         subtask_layout = QHBoxLayout(subtask_container)
         subtask_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -309,7 +309,6 @@ class TaskProgressApp(QWidget):
                 background-color: {COLOR_GREEN.name()};
                 border: 1px solid {COLOR_GREEN.name()};
             }}
-            /* Removed unsupported :after selector (content/display) to silence warnings */
         """)
         checkbox.setChecked(checked)
         checkbox.stateChanged.connect(self.update_progress)
@@ -317,36 +316,52 @@ class TaskProgressApp(QWidget):
         label = QLabel(text)
         label.setStyleSheet(f"color: {COLOR_DARK_GRAY.name()};")
         label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        label.setWordWrap(True)  # Enable text wrapping for multi-line display
-        
-        # Make the label clickable by enabling mouse tracking and setting attributes
+        label.setWordWrap(True)
         label.setMouseTracking(True)
         label.setAttribute(Qt.WA_Hover)
-        label.setCursor(Qt.PointingHandCursor)  # Show hand cursor on hover
+        label.setCursor(Qt.PointingHandCursor)
         label.setToolTip("Left-click to edit, middle-click to delete")
-        
-        # Replace direct lambda with a call to a method that handles different mouse buttons
         label.mousePressEvent = lambda event, lbl=label, container=subtask_container: self.handle_subtask_mouse_event(event, lbl, container)
 
-        subtask_layout.addWidget(checkbox)
-        subtask_layout.addWidget(label)
-
-        # Add drag handle button
-        drag_handle = QPushButton("≡")  # Unicode triple bar symbol
-        drag_handle.setFixedWidth(20)
-        drag_handle.setStyleSheet(f"""
+        # Add UP arrow button
+        up_button = QPushButton("▲")
+        up_button.setFixedWidth(20)
+        up_button.setStyleSheet(f"""
             QPushButton {{
                 border: none;
                 color: {COLOR_GRAY.name()};
-                font-size: 16px;
+                font-size: 14px;
             }}
             QPushButton:hover {{
                 color: {COLOR_DARK_GRAY.name()};
             }}
         """)
-        drag_handle.setCursor(Qt.OpenHandCursor)
-    
-        subtask_layout.insertWidget(0, drag_handle)  # Add at the beginning of layout
+        up_button.setCursor(Qt.PointingHandCursor)
+        
+        # Add DOWN arrow button
+        down_button = QPushButton("▼")
+        down_button.setFixedWidth(20)
+        down_button.setStyleSheet(f"""
+            QPushButton {{
+                border: none;
+                color: {COLOR_GRAY.name()};
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                color: {COLOR_DARK_GRAY.name()};
+            }}
+        """)
+        down_button.setCursor(Qt.PointingHandCursor)
+        
+        # Connect buttons to move methods
+        up_button.clicked.connect(lambda: self.move_subtask_up(subtask_container))
+        down_button.clicked.connect(lambda: self.move_subtask_down(subtask_container))
+
+        # Add all widgets to layout
+        subtask_layout.addWidget(up_button)
+        subtask_layout.addWidget(down_button)
+        subtask_layout.addWidget(checkbox)
+        subtask_layout.addWidget(label)
 
         self.subtasks_layout.addWidget(subtask_container)
         self.subtasks.append((checkbox, label))
@@ -641,6 +656,34 @@ class TaskProgressApp(QWidget):
         
         # Update progress
         self.update_progress()
+
+    def move_subtask_up(self, container):
+        """Move a subtask up in the list."""
+        # Find the index of this container
+        index = -1
+        for i in range(self.subtasks_layout.count()):
+            if self.subtasks_layout.itemAt(i).widget() == container:
+                index = i
+                break
+        
+        if index > 0:  # Can't move the first item up
+            self.move_subtask(index, index - 1)
+            # Force a UI update
+            QApplication.processEvents()
+        
+    def move_subtask_down(self, container):
+        """Move a subtask down in the list."""
+        # Find the index of this container
+        index = -1
+        for i in range(self.subtasks_layout.count()):
+            if self.subtasks_layout.itemAt(i).widget() == container:
+                index = i
+                break
+        
+        if index < self.subtasks_layout.count() - 1:  # Can't move the last item down
+            self.move_subtask(index, index + 1)
+            # Force a UI update
+            QApplication.processEvents()
 
 
 if __name__ == '__main__':
